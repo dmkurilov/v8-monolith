@@ -4,7 +4,6 @@
 
 #include "v8_wrapper.h"
 
-#include <cassert>
 #include <chrono>
 #include <iostream>
 #include <map>
@@ -90,10 +89,10 @@ using HostDispatch = std::map<std::string, HostFn, std::less<>>;
 
 // Drives an async call: services host requests against `dispatch` until the
 // outer call settles, then returns the result.
-v8wrap::ValueResult Drive(v8wrap::Runtime& rt, v8wrap::Future fut,
+v8wrap::ValueResult Drive(v8wrap::Runtime* rt, v8wrap::Future fut,
                           const HostDispatch& dispatch) {
   for (;;) {
-    auto step = rt.Pump(fut);
+    auto step = rt->Pump(&fut);
     if (step.kind == v8wrap::PumpStep::kHostCallPending) {
       auto hc = step.host_call;
       auto name = std::string_view(hc.name().data, hc.name().size);
@@ -112,7 +111,8 @@ v8wrap::ValueResult Drive(v8wrap::Runtime& rt, v8wrap::Future fut,
 }
 
 // Test harness — one Runner per process, holding the Platform.
-struct Runner {
+class Runner {
+ public:
   v8wrap::Platform platform;
   int failures = 0;
 
@@ -135,15 +135,15 @@ struct Runner {
 
 void Runner::SyncTests() {
   std::cout << "\n=== Sync ===\n";
-  v8wrap::Runtime rt(platform);
-  auto pr = rt.Load(ToV8Sv(kPluginA), "pluginA.js");
+  v8wrap::Runtime rt(&platform);
+  auto pr = rt.Load(ToV8Sv(kPluginA), ToV8Sv("pluginA.js"));
   if (!pr.ok) {
     DumpError("load pluginA", pr.error);
     ++failures;
     return;
   }
 
-  auto input = rt.ValueFromJson(R"({"name":"V8"})");
+  auto input = rt.ValueFromJson(ToV8Sv(R"({"name":"V8"})"));
   if (!input.ok) {
     DumpError("ValueFromJson", input.error);
     ++failures;
@@ -151,7 +151,7 @@ void Runner::SyncTests() {
   }
 
   const v8wrap::Value* args[] = {&input.value};
-  auto r1 = rt.Call(*pr.plugin, "greet",
+  auto r1 = rt.Call(pr.plugin, ToV8Sv("greet"),
                     v8wrap::Span<const v8wrap::Value*>{args, 1}, 100);
   if (!r1.ok) {
     DumpError("greet", r1.error);
@@ -164,7 +164,7 @@ void Runner::SyncTests() {
   std::cout << "    greet => " << ToStdSv(js.string) << "\n";
 
   // Second call — module-level state persists.
-  auto r2 = rt.Call(*pr.plugin, "greet",
+  auto r2 = rt.Call(pr.plugin, ToV8Sv("greet"),
                     v8wrap::Span<const v8wrap::Value*>{args, 1}, 100);
   auto js2 = rt.ValueToJson(r2.value);
   ExpectOk("call_count incremented",
@@ -176,8 +176,8 @@ void Runner::SyncTests() {
 
 void Runner::PersistentArgTests() {
   std::cout << "\n=== Persistent arg (parse once, call many) ===\n";
-  v8wrap::Runtime rt(platform);
-  auto pr = rt.Load(ToV8Sv(kPluginA), "pluginA.js");
+  v8wrap::Runtime rt(&platform);
+  auto pr = rt.Load(ToV8Sv(kPluginA), ToV8Sv("pluginA.js"));
   if (!pr.ok) {
     DumpError("load", pr.error);
     ++failures;
@@ -185,7 +185,7 @@ void Runner::PersistentArgTests() {
   }
 
   // Big cfg parsed once.
-  auto cfg = rt.ValueFromJson(R"({"kind":"demo"})");
+  auto cfg = rt.ValueFromJson(ToV8Sv(R"({"kind":"demo"})"));
   if (!cfg.ok) {
     DumpError("cfg", cfg.error);
     ++failures;
@@ -197,7 +197,7 @@ void Runner::PersistentArgTests() {
     std::string req_json = "{\"a\":" + std::to_string(i) + ",\"b\":10}";
     auto req = rt.ValueFromJson(ToV8Sv(req_json));
     const v8wrap::Value* args[] = {&cfg.value, &req.value};
-    auto r = rt.Call(*pr.plugin, "merge",
+    auto r = rt.Call(pr.plugin, ToV8Sv("merge"),
                      v8wrap::Span<const v8wrap::Value*>{args, 2}, 100);
     if (!r.ok) {
       DumpError("merge", r.error);
@@ -214,15 +214,15 @@ void Runner::PersistentArgTests() {
 
 void Runner::AsyncTests() {
   std::cout << "\n=== Async (host-backed I/O) ===\n";
-  v8wrap::Runtime rt(platform);
-  rt.RegisterHost("http");
-  rt.RegisterHost("xmlrpc");
+  v8wrap::Runtime rt(&platform);
+  rt.RegisterHost(ToV8Sv("http"));
+  rt.RegisterHost(ToV8Sv("xmlrpc"));
   HostDispatch dispatch = {
       {"http", &FakeHttp},
       {"xmlrpc", &FakeXmlrpc},
   };
 
-  auto pr = rt.Load(ToV8Sv(kPluginA), "pluginA.js");
+  auto pr = rt.Load(ToV8Sv(kPluginA), ToV8Sv("pluginA.js"));
   if (!pr.ok) {
     DumpError("load", pr.error);
     ++failures;
@@ -230,11 +230,11 @@ void Runner::AsyncTests() {
   }
 
   // (1) Single host hop.
-  auto in1 = rt.ValueFromJson(R"({"url":"/x"})");
+  auto in1 = rt.ValueFromJson(ToV8Sv(R"({"url":"/x"})"));
   const v8wrap::Value* a1[] = {&in1.value};
-  auto f1 = rt.CallAsync(*pr.plugin, "fetch_and_double",
+  auto f1 = rt.CallAsync(pr.plugin, ToV8Sv("fetch_and_double"),
                          v8wrap::Span<const v8wrap::Value*>{a1, 1}, 1000);
-  auto r1 = Drive(rt, std::move(f1), dispatch);
+  auto r1 = Drive(&rt, std::move(f1), dispatch);
   if (!r1.ok) {
     DumpError("fetch_and_double", r1.error);
     ++failures;
@@ -246,11 +246,11 @@ void Runner::AsyncTests() {
            ToStdSv(js1.string).find("\"doubled\":42") != std::string::npos);
 
   // (2) Many hops through mixed host functions.
-  auto in2 = rt.ValueFromJson(R"({"extra":100})");
+  auto in2 = rt.ValueFromJson(ToV8Sv(R"({"extra":100})"));
   const v8wrap::Value* a2[] = {&in2.value};
-  auto f2 = rt.CallAsync(*pr.plugin, "many_hops",
+  auto f2 = rt.CallAsync(pr.plugin, ToV8Sv("many_hops"),
                          v8wrap::Span<const v8wrap::Value*>{a2, 1}, 1000);
-  auto r2 = Drive(rt, std::move(f2), dispatch);
+  auto r2 = Drive(&rt, std::move(f2), dispatch);
   if (!r2.ok) {
     DumpError("many_hops", r2.error);
     ++failures;
@@ -266,10 +266,10 @@ void Runner::AsyncTests() {
 
 void Runner::ErrorTests() {
   std::cout << "\n=== Errors ===\n";
-  v8wrap::Runtime rt(platform);
+  v8wrap::Runtime rt(&platform);
 
   // (a) Compile error.
-  auto bad = rt.Load(ToV8Sv("export functin broken(  { }"), "bad.js");
+  auto bad = rt.Load(ToV8Sv("export functin broken(  { }"), ToV8Sv("bad.js"));
   ExpectOk("syntax error detected",
            !bad.ok && bad.error.kind == v8wrap::Error::kCompileError);
   if (!bad.ok) {
@@ -278,7 +278,7 @@ void Runner::ErrorTests() {
               << ":" << bad.error.column << "\n";
   }
 
-  auto pr = rt.Load(ToV8Sv(kPluginA), "pluginA.js");
+  auto pr = rt.Load(ToV8Sv(kPluginA), ToV8Sv("pluginA.js"));
   if (!pr.ok) {
     DumpError("load", pr.error);
     ++failures;
@@ -286,7 +286,7 @@ void Runner::ErrorTests() {
   }
 
   // (b) Runtime error — expect line+file from the throw site.
-  auto r_boom = rt.Call(*pr.plugin, "boom", {}, 100);
+  auto r_boom = rt.Call(pr.plugin, ToV8Sv("boom"), {}, 100);
   ExpectOk("runtime error detected",
            !r_boom.ok && r_boom.error.kind == v8wrap::Error::kRuntimeError);
   if (!r_boom.ok) {
@@ -296,20 +296,20 @@ void Runner::ErrorTests() {
   }
 
   // (c) Timeout.
-  auto r_loop = rt.Call(*pr.plugin, "loop_forever", {}, 50);
+  auto r_loop = rt.Call(pr.plugin, ToV8Sv("loop_forever"), {}, 50);
   ExpectOk("infinite loop terminated",
            !r_loop.ok && r_loop.error.kind == v8wrap::Error::kTimeout);
 
   // (d) NoSuchFunction.
-  auto r_missing = rt.Call(*pr.plugin, "does_not_exist", {}, 50);
+  auto r_missing = rt.Call(pr.plugin, ToV8Sv("does_not_exist"), {}, 50);
   ExpectOk("missing function detected",
            !r_missing.ok &&
                r_missing.error.kind == v8wrap::Error::kNoSuchFunction);
 
   // (e) Deadlock — plugin awaits something that never resolves, no host call.
-  auto f_dead = rt.CallAsync(*pr.plugin, "deadlock", {}, 100);
+  auto f_dead = rt.CallAsync(pr.plugin, ToV8Sv("deadlock"), {}, 100);
   HostDispatch empty;
-  auto r_dead = Drive(rt, std::move(f_dead), empty);
+  auto r_dead = Drive(&rt, std::move(f_dead), empty);
   ExpectOk("deadlock detected (or timed out)",
            !r_dead.ok && (r_dead.error.kind == v8wrap::Error::kDeadlock ||
                           r_dead.error.kind == v8wrap::Error::kTimeout));
@@ -319,30 +319,30 @@ void Runner::ErrorTests() {
 
 void Runner::IsolationTests() {
   std::cout << "\n=== Isolation (multiple Runtimes) ===\n";
-  v8wrap::Runtime rt_a(platform);
-  v8wrap::Runtime rt_b(platform);
+  v8wrap::Runtime rt_a(&platform);
+  v8wrap::Runtime rt_b(&platform);
 
-  auto pa = rt_a.Load(ToV8Sv(kPluginB), "pluginB-A.js");
-  auto pb = rt_b.Load(ToV8Sv(kPluginB), "pluginB-B.js");
+  auto pa = rt_a.Load(ToV8Sv(kPluginB), ToV8Sv("pluginB-A.js"));
+  auto pb = rt_b.Load(ToV8Sv(kPluginB), ToV8Sv("pluginB-B.js"));
   if (!pa.ok || !pb.ok) {
     ++failures;
     return;
   }
 
-  auto va = rt_a.ValueFromJson(R"({"v":1})");
-  auto vb = rt_b.ValueFromJson(R"({"v":99})");
+  auto va = rt_a.ValueFromJson(ToV8Sv(R"({"v":1})"));
+  auto vb = rt_b.ValueFromJson(ToV8Sv(R"({"v":99})"));
   const v8wrap::Value* aa[] = {&va.value};
   const v8wrap::Value* bb[] = {&vb.value};
 
-  rt_a.Call(*pa.plugin, "push", {aa, 1}, 50);
-  rt_a.Call(*pa.plugin, "push", {aa, 1}, 50);
-  rt_b.Call(*pb.plugin, "push", {bb, 1}, 50);
+  rt_a.Call(pa.plugin, ToV8Sv("push"), {aa, 1}, 50);
+  rt_a.Call(pa.plugin, ToV8Sv("push"), {aa, 1}, 50);
+  rt_b.Call(pb.plugin, ToV8Sv("push"), {bb, 1}, 50);
 
-  auto r_a = rt_a.Call(*pa.plugin, "push", {aa, 1}, 50);
+  auto r_a = rt_a.Call(pa.plugin, ToV8Sv("push"), {aa, 1}, 50);
   auto j_a = rt_a.ValueToJson(r_a.value);
   std::cout << "    rt_a push last => " << ToStdSv(j_a.string) << "\n";
 
-  auto r_b = rt_b.Call(*pb.plugin, "push", {bb, 1}, 50);
+  auto r_b = rt_b.Call(pb.plugin, ToV8Sv("push"), {bb, 1}, 50);
   auto j_b = rt_b.ValueToJson(r_b.value);
   std::cout << "    rt_b push last => " << ToStdSv(j_b.string) << "\n";
 

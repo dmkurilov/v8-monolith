@@ -145,7 +145,8 @@ struct Value::Impl {
 
 Value& Value::operator=(Value&& o) noexcept {
   if (this != &o) {
-    if (impl_) delete impl_;
+    // delete on nullptr is a safe no-op per C++ standard.
+    delete impl_;
     impl_ = o.impl_;
     o.impl_ = nullptr;
   }
@@ -153,7 +154,8 @@ Value& Value::operator=(Value&& o) noexcept {
 }
 
 Value::~Value() {
-  if (impl_) delete impl_;
+  // delete on nullptr is a safe no-op per C++ standard.
+  delete impl_;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +201,8 @@ struct Future::Impl {
 
 Future& Future::operator=(Future&& o) noexcept {
   if (this != &o) {
-    if (impl_) delete impl_;
+    // delete on nullptr is a safe no-op per C++ standard.
+    delete impl_;
     impl_ = o.impl_;
     o.impl_ = nullptr;
   }
@@ -207,7 +210,8 @@ Future& Future::operator=(Future&& o) noexcept {
 }
 
 Future::~Future() {
-  if (impl_) delete impl_;
+  // delete on nullptr is a safe no-op per C++ standard.
+  delete impl_;
 }
 
 // ---------------------------------------------------------------------------
@@ -354,7 +358,7 @@ auto RunUnderDeadline(v8::Isolate* iso,
 
 }  // namespace
 
-Runtime::Runtime(Platform&, RuntimeOptions opts) : impl_(new Impl()) {
+Runtime::Runtime(Platform*, RuntimeOptions opts) : impl_(new Impl()) {
   impl_->allocator.reset(v8::ArrayBuffer::Allocator::NewDefaultAllocator());
 
   v8::Isolate::CreateParams params;
@@ -539,7 +543,7 @@ StringResult Runtime::ValueToJson(const Value& value) {
   return out;
 }
 
-ValueResult Runtime::Call(Plugin& plugin, StringView fn_name,
+ValueResult Runtime::Call(Plugin* plugin, StringView fn_name,
                           Span<const Value*> args, int64_t deadline_ms) {
   ValueResult out;
 
@@ -552,14 +556,14 @@ ValueResult Runtime::Call(Plugin& plugin, StringView fn_name,
   auto deadline = std::chrono::steady_clock::now() +
                   std::chrono::milliseconds(deadline_ms);
 
-  auto exports = plugin.impl_->exports.Get(impl_->isolate);
+  auto exports = plugin->impl_->exports.Get(impl_->isolate);
   v8::Local<v8::Function> fn;
   if (!GetExportedFunction(impl_->isolate, ctx, exports, fn_name).ToLocal(&fn)) {
     out.error.kind = Error::kNoSuchFunction;
     out.error.message = String::Own(fn_name.data, fn_name.size);
     out.error.resource_name =
-        String::Own(plugin.impl_->resource_name.data(),
-                    plugin.impl_->resource_name.size());
+        String::Own(plugin->impl_->resource_name.data(),
+                    plugin->impl_->resource_name.size());
     return out;
   }
 
@@ -581,16 +585,16 @@ ValueResult Runtime::Call(Plugin& plugin, StringView fn_name,
     out.error.kind = Error::kTimeout;
     out.error.message = String::Own("deadline exceeded", 17);
     out.error.resource_name =
-        String::Own(plugin.impl_->resource_name.data(),
-                    plugin.impl_->resource_name.size());
+        String::Own(plugin->impl_->resource_name.data(),
+                    plugin->impl_->resource_name.size());
     return out;
   }
   v8::Local<v8::Value> ret;
   if (!maybe.ToLocal(&ret)) {
     out.error = MakeError(
         Error::kRuntimeError, impl_->isolate, tc,
-        {plugin.impl_->resource_name.data(),
-         plugin.impl_->resource_name.size()});
+        {plugin->impl_->resource_name.data(),
+         plugin->impl_->resource_name.size()});
     return out;
   }
 
@@ -602,15 +606,15 @@ ValueResult Runtime::Call(Plugin& plugin, StringView fn_name,
       out.error.message = String::Own(
           "sync call returned a pending Promise — use CallAsync", 53);
       out.error.resource_name =
-          String::Own(plugin.impl_->resource_name.data(),
-                      plugin.impl_->resource_name.size());
+          String::Own(plugin->impl_->resource_name.data(),
+                      plugin->impl_->resource_name.size());
       return out;
     }
     if (p->State() == v8::Promise::kRejected) {
       out.error = MakeErrorFromException(
           Error::kRuntimeError, impl_->isolate, p->Result(),
-          {plugin.impl_->resource_name.data(),
-           plugin.impl_->resource_name.size()});
+          {plugin->impl_->resource_name.data(),
+           plugin->impl_->resource_name.size()});
       return out;
     }
     ret = p->Result();
@@ -624,11 +628,11 @@ ValueResult Runtime::Call(Plugin& plugin, StringView fn_name,
   return out;
 }
 
-Future Runtime::CallAsync(Plugin& plugin, StringView fn_name,
+Future Runtime::CallAsync(Plugin* plugin, StringView fn_name,
                           Span<const Value*> args, int64_t deadline_ms) {
   auto fi = new Future::Impl();
   fi->runtime = this;
-  fi->plugin = &plugin;
+  fi->plugin = plugin;
   fi->fn_name.assign(fn_name.data, fn_name.size);
   fi->args.assign(args.data, args.data + args.size);
   fi->deadline = std::chrono::steady_clock::now() +
@@ -636,7 +640,7 @@ Future Runtime::CallAsync(Plugin& plugin, StringView fn_name,
   return Future(fi);
 }
 
-PumpStep Runtime::Pump(Future& future) {
+PumpStep Runtime::Pump(Future* future) {
   PumpStep step;
 
   auto make_timeout = [&](StringView resource) {
@@ -648,9 +652,9 @@ PumpStep Runtime::Pump(Future& future) {
     step.result.error.resource_name = String::Own(resource.data, resource.size);
   };
 
-  if (std::chrono::steady_clock::now() >= future.impl_->deadline) {
-    make_timeout({future.impl_->plugin->impl_->resource_name.data(),
-                  future.impl_->plugin->impl_->resource_name.size()});
+  if (std::chrono::steady_clock::now() >= future->impl_->deadline) {
+    make_timeout({future->impl_->plugin->impl_->resource_name.data(),
+                  future->impl_->plugin->impl_->resource_name.size()});
     return step;
   }
 
@@ -659,36 +663,36 @@ PumpStep Runtime::Pump(Future& future) {
   auto ctx = impl_->context.Get(impl_->isolate);
   v8::Context::Scope ctx_scope(ctx);
   v8::TryCatch tc(impl_->isolate);
-  StringView resource{future.impl_->plugin->impl_->resource_name.data(),
-                      future.impl_->plugin->impl_->resource_name.size()};
+  StringView resource{future->impl_->plugin->impl_->resource_name.data(),
+                      future->impl_->plugin->impl_->resource_name.size()};
 
-  if (!future.impl_->started) {
-    future.impl_->started = true;
+  if (!future->impl_->started) {
+    future->impl_->started = true;
 
-    auto exports = future.impl_->plugin->impl_->exports.Get(impl_->isolate);
+    auto exports = future->impl_->plugin->impl_->exports.Get(impl_->isolate);
     v8::Local<v8::Function> fn;
     if (!GetExportedFunction(
              impl_->isolate, ctx, exports,
-             {future.impl_->fn_name.data(), future.impl_->fn_name.size()})
+             {future->impl_->fn_name.data(), future->impl_->fn_name.size()})
              .ToLocal(&fn)) {
       step.kind = PumpStep::kSettled;
       step.result.ok = false;
       step.result.error.kind = Error::kNoSuchFunction;
-      step.result.error.message = String::Own(future.impl_->fn_name.data(),
-                                              future.impl_->fn_name.size());
+      step.result.error.message = String::Own(future->impl_->fn_name.data(),
+                                              future->impl_->fn_name.size());
       step.result.error.resource_name = String::Own(resource.data,
                                                     resource.size);
       return step;
     }
 
     std::vector<v8::Local<v8::Value>> argv;
-    argv.reserve(future.impl_->args.size());
-    for (const Value* v : future.impl_->args) {
+    argv.reserve(future->impl_->args.size());
+    for (const Value* v : future->impl_->args) {
       argv.push_back(v->impl_->value.Get(impl_->isolate));
     }
 
     v8::MaybeLocal<v8::Value> maybe = RunUnderDeadline(
-        impl_->isolate, future.impl_->deadline, [&] {
+        impl_->isolate, future->impl_->deadline, [&] {
           return fn->Call(ctx, v8::Undefined(impl_->isolate),
                           static_cast<int>(argv.size()),
                           argv.empty() ? nullptr : argv.data());
@@ -717,7 +721,7 @@ PumpStep Runtime::Pump(Future& future) {
       step.result.value = Value(vi);
       return step;
     }
-    future.impl_->outer_promise.Reset(impl_->isolate, ret.As<v8::Promise>());
+    future->impl_->outer_promise.Reset(impl_->isolate, ret.As<v8::Promise>());
   }
 
   // Run any microtasks queued by previous host-call resolutions, then check
@@ -730,7 +734,7 @@ PumpStep Runtime::Pump(Future& future) {
     return step;
   }
 
-  auto promise = future.impl_->outer_promise.Get(impl_->isolate);
+  auto promise = future->impl_->outer_promise.Get(impl_->isolate);
   switch (promise->State()) {
     case v8::Promise::kPending:
       step.kind = PumpStep::kSettled;

@@ -27,7 +27,7 @@ struct StringView {
   constexpr StringView(const char* d, size_t s) noexcept : data(d), size(s) {}
 
   // Convenience: construct from a NUL-terminated C string (inline strlen).
-  StringView(const char* c_str) noexcept : data(c_str), size(0) {
+  explicit StringView(const char* c_str) noexcept : data(c_str), size(0) {
     if (c_str) {
       while (c_str[size]) ++size;
     }
@@ -238,7 +238,7 @@ struct RuntimeOptions {
 // Runtime from within a HostCall handler of that same Runtime.
 class Runtime {
  public:
-  explicit Runtime(Platform& platform, RuntimeOptions opts = {});
+  explicit Runtime(Platform* platform, RuntimeOptions opts = {});
   ~Runtime();
   Runtime(const Runtime&) = delete;
   Runtime& operator=(const Runtime&) = delete;
@@ -261,18 +261,18 @@ class Runtime {
 
   // Sync call. Fails with kRuntimeError if the function returns a pending
   // Promise (use CallAsync for async functions).
-  ValueResult Call(Plugin& plugin, StringView fn_name,
+  ValueResult Call(Plugin* plugin, StringView fn_name,
                    Span<const Value*> args, int64_t deadline_ms);
 
   // Async call — returns immediately with a Future. Drive via Pump until
   // PumpStep::kSettled.
-  Future CallAsync(Plugin& plugin, StringView fn_name,
+  Future CallAsync(Plugin* plugin, StringView fn_name,
                    Span<const Value*> args, int64_t deadline_ms);
 
   // Advance a Future. Returns kHostCallPending if JS suspended on a
   // `await host.X(...)`, or kSettled if the outer call finished (success or
   // error including kTimeout / kDeadlock).
-  PumpStep Pump(Future& future);
+  PumpStep Pump(Future* future);
 
   struct Impl;
   Impl* impl_ = nullptr;
