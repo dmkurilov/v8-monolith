@@ -9,6 +9,11 @@ on:
     paths:
       - v8-version.txt
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build (linux, mac, all)'
+        required: true
+        default: 'all'
 
 permissions:
   contents: write
@@ -29,7 +34,9 @@ jobs:
       - name: Diff v8-version.txt
         id: diff
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            ci/detect.sh --platforms "${{ github.event.inputs.platforms }}"
+          elif [ "${{ github.event_name }}" = "pull_request" ]; then
             ci/detect.sh "${{ github.event.pull_request.base.sha }}"
           else
             ci/detect.sh HEAD~1
@@ -40,7 +47,7 @@ jobs:
     name: Build ${{ matrix.os }} ${{ matrix.cpu }}
     needs: detect
     if: >-
-      github.event_name == 'pull_request'
+      github.event_name != 'push'
       && fromJson(needs.detect.outputs.matrix).include[0] != null
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
@@ -91,9 +98,11 @@ jobs:
   # ── Publish draft releases (merge to main only) ────────────────
   publish:
     name: Publish ${{ matrix.os }} ${{ matrix.cpu }}
-    needs: detect
+    needs: [detect, build]
     if: >-
-      github.event_name != 'pull_request'
+      always()
+      && github.event_name != 'pull_request'
+      && (needs.build.result == 'success' || needs.build.result == 'skipped')
       && fromJson(needs.detect.outputs.matrix).include[0] != null
     runs-on: ubuntu-latest
     timeout-minutes: 10
