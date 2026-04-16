@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - v8-version.txt
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -92,7 +93,7 @@ jobs:
     name: Publish ${{ matrix.os }} ${{ matrix.cpu }}
     needs: detect
     if: >-
-      github.event_name == 'push'
+      github.event_name != 'pull_request'
       && fromJson(needs.detect.outputs.matrix).include[0] != null
     runs-on: ubuntu-latest
     timeout-minutes: 10
