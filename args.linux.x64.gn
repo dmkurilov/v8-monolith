@@ -41,7 +41,7 @@ target_os = "linux"
 target_cpu = "x64"
 v8_target_cpu = "x64"
 
-use_sysroot = false
+use_sysroot = true
 
 # Emit gen/include/v8-gn.h with the embedder-visible defines (V8_ENABLE_SANDBOX,
 # V8_COMPRESS_POINTERS, ...) so client code can opt in via -DV8_GN_HEADER and
