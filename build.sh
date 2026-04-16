@@ -69,25 +69,25 @@ echo "Building v8_monolith..."
   PATH="$PWD/../depot_tools:$PATH" ninja -C "$out_dir" v8_monolith gen_v8_gn
 )
 
-# On Linux, V8 was built against its bundled libc++ which lives in separate
-# archives. Merge them into libv8_monolith.a so embedders link a single .a.
-# (On macOS the toolchain libc++ comes from the SDK; nothing to bundle.)
-if [ "$os" = "linux" ]; then
-  obj_dir="build/v8/$out_dir/obj"
-  v8_archive="$obj_dir/libv8_monolith.a"
+# V8 was built against its bundled libc++ which lives in separate archives.
+# Merge them into libv8_monolith.a so embedders link a single .a.
+obj_dir="build/v8/$out_dir/obj"
+v8_archive="$obj_dir/libv8_monolith.a"
 
-  # Force a clean re-link of libv8_monolith.a so we always start from a
-  # libc++-free archive — otherwise re-running build.sh would compound libc++
-  # members on each invocation. The AR step is fast (~2s).
-  rm -f "$v8_archive"
-  (
-    cd build/v8
-    PATH="$PWD/../depot_tools:$PATH" ninja -C "$out_dir" v8_monolith
-  )
+# Force a clean re-link of libv8_monolith.a so we always start from a
+# libc++-free archive — otherwise re-running build.sh would compound libc++
+# members on each invocation. The AR step is fast (~2s).
+rm -f "$v8_archive"
+(
+  cd build/v8
+  PATH="$PWD/../depot_tools:$PATH" ninja -C "$out_dir" v8_monolith
+)
 
-  echo "Bundling libc++ + libc++abi into libv8_monolith.a..."
-  merged=$(mktemp)
-  ar -M <<EOF
+echo "Bundling libc++ + libc++abi into libv8_monolith.a..."
+case "$os" in
+  linux)
+    merged=$(mktemp)
+    ar -M <<EOF
 CREATE $merged
 ADDLIB $v8_archive
 ADDLIB $obj_dir/buildtools/third_party/libc++/libc++.a
@@ -95,7 +95,23 @@ ADDLIB $obj_dir/buildtools/third_party/libc++abi/libc++abi.a
 SAVE
 END
 EOF
-  mv "$merged" "$v8_archive"
-fi
+    mv "$merged" "$v8_archive"
+    ;;
+  mac)
+    # macOS system libtool can't merge .a into .a. Use V8's bundled llvm-ar
+    # which supports MRI scripts just like GNU ar.
+    llvm_ar="build/v8/third_party/llvm-build/Release+Asserts/bin/llvm-ar"
+    merged=$(mktemp)
+    "$llvm_ar" -M <<EOF
+CREATE $merged
+ADDLIB $v8_archive
+ADDLIB $obj_dir/buildtools/third_party/libc++/libc++.a
+ADDLIB $obj_dir/buildtools/third_party/libc++abi/libc++abi.a
+SAVE
+END
+EOF
+    mv "$merged" "$v8_archive"
+    ;;
+esac
 
 echo "v8_monolith is successfully built. You can run test.sh"

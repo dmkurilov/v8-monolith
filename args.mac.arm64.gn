@@ -19,25 +19,31 @@ enable_rust = false
 v8_enable_temporal_support = false
 v8_enable_i18n_support = false
 
-# Security measures to reduce the impact of running untrusted JS code
-v8_enable_sandbox = false
-#v8_enable_external_code_space = true
-#use_safe_libcxx = true
+# === Hardening for running untrusted JS ===
+# Sandbox isolates V8 heap objects in a constrained virtual address space so a
+# type-confusion bug inside V8 cannot easily reach arbitrary process memory.
+v8_enable_sandbox = true
+# Sandbox requires pointer compression.
+v8_enable_pointer_compression = true
+# JIT (Sparkplug + Maglev + Turbofan) is left on — hot plugin functions need
+# optimized codegen for acceptable throughput. Sandbox still constrains where
+# JIT bugs can reach in process memory.
+# WebAssembly is a large extra attack surface; disable for untrusted JS.
 v8_enable_webassembly = false
 
-# As soon as v8_enabled_sandbox is disabled, use standard toolchain
+# Toolchain — V8's bundled clang + libc++ (system libstdc++ from GCC 13 trips
+# -Wctad-maybe-unsupported on std::atomic_ref usage in cppgc).
 is_clang = true
-use_custom_libcxx = false
+use_custom_libcxx = true
 
 # Target-specific settings
 target_os = "mac"
 target_cpu = "arm64"
 v8_target_cpu = "arm64"
 
-# Prefer not to pin the SDK locally unless this is a CI / reproducible build
-# Let GN/Xcode choose the appropriate SDK path automatically
-#mac_sdk_path="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.2.sdk"
-use_sysroot = false
+use_sysroot = true
 
-# Otherwise you can't build v8, at least on mac
-v8_enable_pointer_compression=false
+# Emit gen/include/v8-gn.h with the embedder-visible defines (V8_ENABLE_SANDBOX,
+# V8_COMPRESS_POINTERS, ...) so client code can opt in via -DV8_GN_HEADER and
+# get an ABI matching libv8_monolith.a.
+v8_generate_external_defines_header = true
