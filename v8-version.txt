@@ -1,4 +1,4 @@
 # https://chromiumdash.appspot.com/releases
 
 linux: 1e1e0c88c55414e3ab7f98629a0233d3dc77fca0  # 145.0.7632.159
-macos: bc343986bd4cb17e49ef15b70c4bdac710e27167  # 146.0.7680.66
+mac: bc343986bd4cb17e49ef15b70c4bdac710e27167  # 146.0.7680.66

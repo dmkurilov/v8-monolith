@@ -5,7 +5,7 @@
 ## Usage
 
 ```sh
-./fetch.sh
-./build.sh mac arm64
-./test.sh mac arm64
+ci/fetch.sh
+ci/build.sh mac arm64
+ci/test.sh mac arm64
 ```

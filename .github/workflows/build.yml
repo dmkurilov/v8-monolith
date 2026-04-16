@@ -1,0 +1,112 @@
+name: V8 Monolith
+
+on:
+  pull_request:
+    paths:
+      - v8-version.txt
+  push:
+    branches: [main]
+    paths:
+      - v8-version.txt
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Detect which platforms changed ─────────────────────────────
+  detect:
+    name: Detect changed platforms
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.diff.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Diff v8-version.txt
+        id: diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ci/detect.sh "${{ github.event.pull_request.base.sha }}"
+          else
+            ci/detect.sh HEAD~1
+          fi
+
+  # ── Build, test, create draft release (PR only) ────────────────
+  build:
+    name: Build ${{ matrix.os }} ${{ matrix.cpu }}
+    needs: detect
+    if: >-
+      github.event_name == 'pull_request'
+      && fromJson(needs.detect.outputs.matrix).include[0] != null
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore depot_tools cache
+        uses: actions/cache@v4
+        with:
+          path: build/depot_tools
+          key: depot-tools-${{ runner.os }}
+
+      - name: Free disk space
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android \
+                       /opt/ghc /usr/local/share/boost
+          sudo apt-get clean
+          df -h /
+
+      - name: Fetch V8 and depot_tools
+        run: ci/fetch.sh
+
+      - name: Build v8_monolith
+        run: ci/build.sh ${{ matrix.os }} ${{ matrix.cpu }}
+
+      - name: Test v8_monolith
+        run: ci/test.sh ${{ matrix.os }} ${{ matrix.cpu }}
+
+      - name: Package release
+        id: package
+        run: ci/package.sh ${{ matrix.os }} ${{ matrix.cpu }}
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          ci/draft-release.sh
+          "${{ steps.package.outputs.tag }}"
+          "${{ steps.package.outputs.version }}"
+          "${{ steps.package.outputs.tarball }}"
+          "${{ matrix.os }}"
+          "${{ matrix.cpu }}"
+
+  # ── Publish draft releases (merge to main only) ────────────────
+  publish:
+    name: Publish ${{ matrix.os }} ${{ matrix.cpu }}
+    needs: detect
+    if: >-
+      github.event_name == 'push'
+      && fromJson(needs.detect.outputs.matrix).include[0] != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix: ${{ fromJson(needs.detect.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          ci/publish-release.sh
+          "${{ matrix.os }}"
+          "${{ matrix.cpu }}"
+          "${{ github.repository }}"
+          "${{ github.sha }}"

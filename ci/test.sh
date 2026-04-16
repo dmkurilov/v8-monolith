@@ -21,7 +21,7 @@ case "$cpu" in
   *) echo "Invalid cpu: $cpu (use x64 or arm64)" >&2; exit 1 ;;
 esac
 
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/.." || exit 1
 out_dir="out.gn/${os}.${cpu}.release"
 lib_path="build/v8/$out_dir/obj/libv8_monolith.a"
 if [ ! -f "$lib_path" ]; then

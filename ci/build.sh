@@ -27,14 +27,10 @@ case "$cpu" in
     ;;
 esac
 
-cd "$(dirname "$0")" || exit 1
-case "$os" in
-  mac) platform=macos ;;
-  linux) platform=linux ;;
-esac
-commit=$(grep "^${platform}:" v8-version.txt | awk '{ print $2; exit }')
+cd "$(dirname "$0")/.." || exit 1
+commit=$(grep "^${os}:" v8-version.txt | awk '{ print $2; exit }')
 if [ -z "$commit" ]; then
-  echo "Could not read commit for $platform from v8-version.txt" >&2
+  echo "Could not read commit for $os from v8-version.txt" >&2
   exit 1
 fi
 
