@@ -14,7 +14,7 @@ emit() {
   local os=$1
   case "$os" in
     linux) echo '{"os":"linux","cpu":"x64","runner":"ubuntu-24.04"}' ;;
-    mac)   echo '{"os":"mac","cpu":"arm64","runner":"macos-14"}' ;;
+    mac)   echo '{"os":"mac","cpu":"arm64","runner":"macos-15"}' ;;
   esac
 }
 
