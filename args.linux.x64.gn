@@ -1,0 +1,49 @@
+# Build a static monolithic V8 library to make embedding into other build systems easier
+v8_monolithic = true
+is_component_build = false
+v8_static_library = true
+v8_use_external_startup_data = false
+libcxx_is_shared = false
+
+# Flags that affect binary size
+is_debug = false
+symbol_level = 0
+strip_debug_info = true
+v8_symbol_level = 0
+use_rtti = false
+clang_use_chrome_plugins = false
+dcheck_always_on = false
+v8_enable_gdbjit = false
+v8_enable_test_features = false
+enable_rust = false
+v8_enable_temporal_support = false
+v8_enable_i18n_support = false
+
+# === Hardening for running untrusted JS ===
+# Sandbox isolates V8 heap objects in a constrained virtual address space so a
+# type-confusion bug inside V8 cannot easily reach arbitrary process memory.
+v8_enable_sandbox = true
+# Sandbox requires pointer compression.
+v8_enable_pointer_compression = true
+# JIT (Sparkplug + Maglev + Turbofan) is left on — hot plugin functions need
+# optimized codegen for acceptable throughput. Sandbox still constrains where
+# JIT bugs can reach in process memory.
+# WebAssembly is a large extra attack surface; disable for untrusted JS.
+v8_enable_webassembly = false
+
+# Toolchain — V8's bundled clang + libc++ (system libstdc++ from GCC 13 trips
+# -Wctad-maybe-unsupported on std::atomic_ref usage in cppgc).
+is_clang = true
+use_custom_libcxx = true
+
+# Target-specific settings
+target_os = "linux"
+target_cpu = "x64"
+v8_target_cpu = "x64"
+
+use_sysroot = false
+
+# Emit gen/include/v8-gn.h with the embedder-visible defines (V8_ENABLE_SANDBOX,
+# V8_COMPRESS_POINTERS, ...) so client code can opt in via -DV8_GN_HEADER and
+# get an ABI matching libv8_monolith.a.
+v8_generate_external_defines_header = true

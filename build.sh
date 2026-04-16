@@ -63,6 +63,39 @@ cp "$args_file" "build/v8/$out_dir/args.gn"
 echo "Building v8_monolith..."
 (
   cd build/v8
-  ninja -C "$out_dir" v8_monolith
+  # v8-gn.h captures embedder-visible build defines (V8_ENABLE_SANDBOX,
+  # V8_COMPRESS_POINTERS, etc.) — embedders include it via -DV8_GN_HEADER so
+  # the header layout of v8::Local etc. matches the .a's ABI.
+  PATH="$PWD/../depot_tools:$PATH" ninja -C "$out_dir" v8_monolith gen_v8_gn
 )
+
+# On Linux, V8 was built against its bundled libc++ which lives in separate
+# archives. Merge them into libv8_monolith.a so embedders link a single .a.
+# (On macOS the toolchain libc++ comes from the SDK; nothing to bundle.)
+if [ "$os" = "linux" ]; then
+  obj_dir="build/v8/$out_dir/obj"
+  v8_archive="$obj_dir/libv8_monolith.a"
+
+  # Force a clean re-link of libv8_monolith.a so we always start from a
+  # libc++-free archive — otherwise re-running build.sh would compound libc++
+  # members on each invocation. The AR step is fast (~2s).
+  rm -f "$v8_archive"
+  (
+    cd build/v8
+    PATH="$PWD/../depot_tools:$PATH" ninja -C "$out_dir" v8_monolith
+  )
+
+  echo "Bundling libc++ + libc++abi into libv8_monolith.a..."
+  merged=$(mktemp)
+  ar -M <<EOF
+CREATE $merged
+ADDLIB $v8_archive
+ADDLIB $obj_dir/buildtools/third_party/libc++/libc++.a
+ADDLIB $obj_dir/buildtools/third_party/libc++abi/libc++abi.a
+SAVE
+END
+EOF
+  mv "$merged" "$v8_archive"
+fi
+
 echo "v8_monolith is successfully built. You can run test.sh"
