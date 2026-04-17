@@ -41,7 +41,10 @@ target_os = "mac"
 target_cpu = "arm64"
 v8_target_cpu = "arm64"
 
+# Chromium 146+ targets macOS SDK 26 (Xcode 26 beta). On older SDKs, Clang
+# modules fail because DarwinFoundation*.modulemap files don't exist yet.
 use_sysroot = true
+use_clang_modules = false
 
 # Emit gen/include/v8-gn.h with the embedder-visible defines (V8_ENABLE_SANDBOX,
 # V8_COMPRESS_POINTERS, ...) so client code can opt in via -DV8_GN_HEADER and
